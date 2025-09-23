@@ -104,3 +104,5 @@ class UserSession(BaseModel):
     last_activity: datetime = Field(default_factory=datetime.now, description="最后活动时间")
     is_active: bool = Field(default=True, description="是否激活")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="会话元数据")
+
+    

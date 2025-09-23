@@ -260,5 +260,4 @@ class RedisClient:
             logger.error(f"Redis获取列表范围失败: {e}")
             return []
 
-# 创建全局Redis客户端实例
 redis_client = RedisClient()
