@@ -15,36 +15,12 @@ class CharacterService:
     def __init__(self):
         self.redis = redis_client
         self.dashscope = dashscope_service
-        self._init_default_characters()
+        # 移除默认角色初始化，所有角色都通过搜索创建
     
-    def _init_default_characters(self):
-        """初始化默认角色"""
-        self.default_characters = [
-            {
-                'name': '哈利波特',
-                'description': '英国魔法师，霍格沃茨魔法学校格兰芬多学院学生，以勇敢和正义感闻名',
-                'personality_traits': ['勇敢', '正义', '忠诚', '善良', '有责任感'],
-                'background_story': '在一岁时父母被伏地魔杀害，被姨妈姨父收养。十一岁时收到霍格沃茨录取通知书，开始了魔法世界的学习和冒险。'
-            },
-            {
-                'name': '苏格拉底',
-                'description': '古希腊著名哲学家，被誉为西方哲学奠基人之一，以苏格拉底式问答法闻名',
-                'personality_traits': ['智慧', '好奇', '谦逊', '理性', '爱思辨'],
-                'background_story': '生活在古雅典，致力于通过对话和提问来寻求真理和智慧，提出"未经审视的生活不值得过"的著名观点。'
-            },
-            {
-                'name': '夏洛克福尔摩斯',
-                'description': '英国著名侦探，居住在贝克街221B号，以卓越的推理能力和观察力解决各种疑难案件',
-                'personality_traits': ['理性', '敏锐', '冷静', '傲慢', '专注'],
-                'background_story': '伦敦的咨询侦探，与华生医生合作破案。擅长通过细微观察和逻辑推理解决看似不可能的案件。'
-            },
-            {
-                'name': '孔子',
-                'description': '春秋时期的思想家和教育家，儒家学派创始人，以其道德哲学和教育理念影响深远',
-                'personality_traits': ['仁爱', '智慧', '谦逊', '有教无类', '重视礼仪'],
-                'background_story': '生于春秋末期，周游列国推行其政治理想，晚年专注于教育，培养了众多弟子，其思想影响中华文化数千年。'
-            }
-        ]
+    # 移除默认角色初始化功能，所有角色都通过搜索创建
+    # def _init_default_characters(self):
+    #     """初始化默认角色"""
+    #     pass  # 不再预置默认角色
     
     async def create_character(
         self, 
@@ -294,31 +270,10 @@ class CharacterService:
             return False
     
     async def init_default_characters_if_needed(self):
-        """如果需要则初始化默认角色"""
-        try:
-            # 检查是否已有角色
-            existing_characters = await self.get_character_list(limit=1)
-            if existing_characters:
-                return
-            
-            logger.info("初始化默认角色...")
-            
-            for char_info in self.default_characters:
-                result = await self.create_character(
-                    name=char_info['name'],
-                    description=char_info['description'],
-                    personality_traits=char_info['personality_traits'],
-                    background_story=char_info['background_story'],
-                    generate_avatar=False  # 暂时不生成头像
-                )
-                
-                if result['success']:
-                    logger.info(f"默认角色创建成功: {char_info['name']}")
-                else:
-                    logger.error(f"默认角色创建失败: {char_info['name']} - {result.get('error')}")
-            
-        except Exception as e:
-            logger.error(f"初始化默认角色异常: {e}")
+        """不再初始化默认角色，所有角色都通过搜索创建"""
+        # 移除默认角色初始化逻辑
+        logger.info("系统不再预置默认角色，所有角色都将通过搜索创建")
+        pass
     
     async def get_character_prompt(self, character_id: str) -> Optional[str]:
         """获取角色提示词"""

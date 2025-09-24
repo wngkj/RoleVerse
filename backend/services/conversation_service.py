@@ -417,8 +417,11 @@ class ConversationService:
             if success:
                 # 从用户对话列表中移除
                 user_conversations_key = f"user_conversations:{conversation.user_id}"
-                # 这里需要实现从列表中移除特定元素的功能
-                # 暂时跳过
+                self._remove_from_list(user_conversations_key, conversation_id)
+                
+                # 从角色对话列表中移除
+                character_conversations_key = f"character_conversations:{conversation.character_id}"
+                self._remove_from_list(character_conversations_key, conversation_id)
                 
                 logger.info(f"对话删除成功: {conversation_id}")
             
@@ -427,6 +430,21 @@ class ConversationService:
         except Exception as e:
             logger.error(f"删除对话异常: {e}")
             return False
+    
+    def _remove_from_list(self, list_key: str, item_to_remove: str):
+        """从 Redis 列表中移除指定元素"""
+        try:
+            # 获取列表所有元素
+            items = self.redis.list_range(list_key, 0, -1)
+            if item_to_remove in items:
+                # 删除列表
+                self.redis.delete_data(list_key)
+                # 重新添加其他元素
+                for item in items:
+                    if item != item_to_remove:
+                        self.redis.list_push(list_key, item)
+        except Exception as e:
+            logger.error(f"从列表中移除元素异常: {e}")
     
     async def update_conversation_title(self, conversation_id: str, title: str) -> bool:
         """更新对话标题"""

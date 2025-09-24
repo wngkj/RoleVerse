@@ -236,8 +236,8 @@ class RoleVerseApp {
         // 加载对话列表
         await this.loadConversations();
         
-        // 加载角色列表（如果需要）
-        // await this.loadCharacters();
+        // 不再加载默认角色，始终显示搜索界面
+        this.showSearchInterface();
     }
     
     async loadConversations() {
@@ -285,9 +285,14 @@ class RoleVerseApp {
             
             conversations.forEach(conv => {
                 html += `
-                    <div class=\"conversation-item\" onclick=\"app.openConversation('${conv.conversation_id}')\">
-                        <div class=\"conversation-title\">${conv.title}</div>
-                        <div class=\"conversation-preview\">${conv.last_message || '暂无消息'}</div>
+                    <div class="conversation-item">
+                        <div class="conversation-content" onclick="app.openConversation('${conv.conversation_id}')">
+                            <div class="conversation-title">${conv.title}</div>
+                            <div class="conversation-preview">${conv.last_message || '暂无消息'}</div>
+                        </div>
+                        <button class="delete-btn" onclick="event.stopPropagation(); app.deleteConversation('${conv.conversation_id}')" title="删除对话">
+                            ×
+                        </button>
                     </div>
                 `;
             });
@@ -371,12 +376,31 @@ class RoleVerseApp {
         if (chatContainer) chatContainer.style.display = 'flex';
     }
     
-    hideSearchResults() {
-        const searchResults = document.getElementById('search-results');
+    showSearchInterface() {
+        // 始终显示搜索界面，不显示角色展示区
         const characterDisplay = document.getElementById('character-display');
+        const searchResults = document.getElementById('search-results');
+        const chatContainer = document.getElementById('chat-container');
+        const characterGrid = document.getElementById('character-grid');
         
-        if (searchResults) searchResults.style.display = 'none';
-        if (characterDisplay) characterDisplay.style.display = 'flex';
+        if (characterDisplay) characterDisplay.style.display = 'none';
+        if (chatContainer) chatContainer.style.display = 'none';
+        
+        if (searchResults && characterGrid) {
+            characterGrid.innerHTML = `
+                <div class="search-prompt">
+                    <h3>🔍 搜索或创建你想要对话的角色</h3>
+                    <p>输入任意角色名称，如：哈利波特、钢铁侠、孙悟空等</p>
+                    <p><small>如果角色不存在，系统将自动为您创建</small></p>
+                </div>
+            `;
+            searchResults.style.display = 'block';
+        }
+    }
+    
+    hideSearchResults() {
+        // 不再隐藏搜索结果，而是返回初始搜索界面
+        this.showSearchInterface();
     }
     
     renderMessages() {
@@ -729,6 +753,44 @@ class RoleVerseApp {
     stopRecording() {
         // 停止语音录制功能将在音频模块中实现
         console.log('停止语音录制...');
+    }
+    
+    // 添加删除对话的方法
+    async deleteConversation(conversationId) {
+        if (!confirm('确定要删除这个对话吗？删除后无法恢复。')) {
+            return;
+        }
+        
+        try {
+            const response = await fetch(`/api/conversations/${conversationId}`, {
+                method: 'DELETE'
+            });
+            
+            if (response.ok) {
+                const result = await response.json();
+                if (result.success) {
+                    // 如果删除的是当前对话，返回搜索界面
+                    if (this.currentConversation && this.currentConversation.conversation_id === conversationId) {
+                        this.currentConversation = null;
+                        this.currentCharacter = null;
+                        this.showSearchInterface();
+                    }
+                    
+                    // 刷新对话列表
+                    await this.loadConversations();
+                    this.renderConversations();
+                    
+                    this.showModal('对话删除成功');
+                } else {
+                    this.showModal('删除失败: ' + result.error);
+                }
+            } else {
+                this.showModal('删除请求失败，请检查网络连接');
+            }
+        } catch (error) {
+            console.error('删除对话失败:', error);
+            this.showModal('删除出现错误: ' + error.message);
+        }
     }
 }
 

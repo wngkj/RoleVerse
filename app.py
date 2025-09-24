@@ -182,6 +182,31 @@ def get_conversations():
         logger.error(f"获取对话列表异常: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
+@app.route('/api/conversations/<conversation_id>', methods=['DELETE'])
+def delete_conversation(conversation_id):
+    """删除对话"""
+    try:
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({'success': False, 'error': '未登录'}), 401
+        
+        # 验证对话存在且属于当前用户
+        conversation = run_async(conversation_service.get_conversation(conversation_id))
+        if not conversation or conversation.user_id != user_id:
+            return jsonify({'success': False, 'error': '对话不存在或无权限'}), 404
+        
+        # 删除对话
+        success = run_async(conversation_service.delete_conversation(conversation_id))
+        
+        if success:
+            return jsonify({'success': True, 'message': '对话删除成功'})
+        else:
+            return jsonify({'success': False, 'error': '对话删除失败'}), 500
+            
+    except Exception as e:
+        logger.error(f"删除对话异常: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @app.route('/api/conversations/<conversation_id>', methods=['GET'])
 def get_conversation(conversation_id):
     """获取对话详情"""
@@ -245,6 +270,49 @@ def chat():
         
     except Exception as e:
         logger.error(f"聊天异常: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/conversations/batch-delete', methods=['POST'])
+def batch_delete_conversations():
+    """批量删除对话"""
+    try:
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({'success': False, 'error': '未登录'}), 401
+        
+        data = request.get_json()
+        conversation_ids = data.get('conversation_ids', [])
+        
+        if not conversation_ids:
+            return jsonify({'success': False, 'error': '请提供要删除的对话 ID'}), 400
+        
+        deleted_count = 0
+        failed_count = 0
+        
+        for conversation_id in conversation_ids:
+            try:
+                # 验证对话存在且属于当前用户
+                conversation = run_async(conversation_service.get_conversation(conversation_id))
+                if conversation and conversation.user_id == user_id:
+                    success = run_async(conversation_service.delete_conversation(conversation_id))
+                    if success:
+                        deleted_count += 1
+                    else:
+                        failed_count += 1
+                else:
+                    failed_count += 1
+            except Exception:
+                failed_count += 1
+        
+        return jsonify({
+            'success': True, 
+            'deleted_count': deleted_count,
+            'failed_count': failed_count,
+            'message': f'成功删除 {deleted_count} 个对话，{failed_count} 个失败'
+        })
+        
+    except Exception as e:
+        logger.error(f"批量删除对话异常: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 # ========== 音频相关API ==========
