@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RoleVerse - AI角色扮演聊天</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <!-- 侧边栏 -->
+        <div class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <h2>RoleVerse</h2>
+                <div class="user-info">
+                    <span id="username">未登录</span>
+                    <button id="logout-btn" class="btn-logout" style="display: none;">登出</button>
+                </div>
+            </div>
+            
+            <div class="conversation-list">
+                <h3>对话记录</h3>
+                <div id="conversations-container">
+                    <!-- 对话记录将在这里动态加载 -->
+                </div>
+            </div>
+        </div>
+        
+        <!-- 主内容区 -->
+        <div class="main-content">
+            <!-- 顶部搜索栏 -->
+            <div class="search-bar">
+                <input type="text" id="character-search" placeholder="搜索角色，如哈利波特、苏格拉底...">
+                <button id="search-btn" class="btn-primary">搜索</button>
+            </div>
+            
+            <!-- 角色展示区 -->
+            <div class="character-display" id="character-display">
+                <div class="character-avatar">
+                    <img id="character-avatar" src="/static/images/default-avatar.svg" alt="角色头像">
+                </div>
+                <div class="character-info">
+                    <h2 id="character-name">请搜索并选择一个角色</h2>
+                    <p id="character-description">开始你的AI角色扮演之旅</p>
+                </div>
+            </div>
+            
+            <!-- 聊天区域 -->
+            <div class="chat-container" id="chat-container" style="display: none;">
+                <div class="chat-messages" id="chat-messages">
+                    <!-- 聊天消息将在这里显示 -->
+                </div>
+                
+                <div class="chat-input-area">
+                    <!-- 输入模式切换 -->
+                    <div class="input-mode-toggle">
+                        <button id="voice-mode-btn" class="mode-btn active">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+                                <path d="M19 11a7 7 0 0 1-14 0"/>
+                                <path d="M12 18.5v3"/>
+                                <path d="M8 22h8"/>
+                            </svg>
+                            语音模式
+                        </button>
+                        <button id="text-mode-btn" class="mode-btn">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+                            </svg>
+                            文字模式
+                        </button>
+                    </div>
+                    
+                    <!-- 输入区域 -->
+                    <div class="input-container">
+                        <!-- 文字输入模式 -->
+                        <div class="text-input-container" id="text-input-container" style="display: none;">
+                            <input type="text" id="message-input" placeholder="输入消息...">
+                            <button id="send-btn" class="btn-send">发送</button>
+                        </div>
+                        
+                        <!-- 语音输入模式 -->
+                        <div class="voice-input-container" id="voice-input-container">
+                            <div class="voice-input" id="voice-input">
+                                <button id="voice-btn" class="btn-voice">
+                                    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                                        <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+                                        <path d="M19 11a7 7 0 0 1-14 0"/>
+                                        <path d="M12 18.5v3"/>
+                                        <path d="M8 22h8"/>
+                                    </svg>
+                                    点击说话
+                                </button>
+                                <div class="voice-wave" id="voice-wave" style="display: none;">
+                                    <div class="wave-bar"></div>
+                                    <div class="wave-bar"></div>
+                                    <div class="wave-bar"></div>
+                                    <div class="wave-bar"></div>
+                                    <div class="wave-bar"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 搜索结果区域 -->
+            <div class="search-results" id="search-results" style="display: none;">
+                <h3>搜索结果</h3>
+                <div class="character-grid" id="character-grid">
+                    <!-- 搜索结果将在这里显示 -->
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 模态框 -->
+    <div class="modal" id="modal" style="display: none;">
+        <div class="modal-content">
+            <span class="close" id="modal-close">&times;</span>
+            <div id="modal-body">
+                <!-- 模态框内容 -->
+            </div>
+        </div>
+    </div>
+    
+    <!-- 音频播放器 -->
+    <audio id="audio-player" style="display: none;"></audio>
+    
+    <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/audio.js') }}"></script>
+</body>
+</html>

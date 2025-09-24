@@ -221,8 +221,8 @@ class ConversationService:
             else:
                 messages = [{"role": "system", "content": character.prompt_template}]
             
-            # 调用AI生成回复
-            ai_response = await self.dashscope.chat_completion(messages)
+            # 调用AI生成回复，使用更高的温度参数提升回复多样性
+            ai_response = await self.dashscope.chat_completion(messages, temperature=0.8)
             
             if not ai_response['success']:
                 raise Exception(f"AI回复生成失败: {ai_response['error']}")
@@ -269,17 +269,27 @@ class ConversationService:
         conversation: Conversation, 
         character: Any
     ) -> List[Dict[str, str]]:
-        """构建对话消息列表"""
+        """构建对话消息列表，包含增强的上下文感知"""
         messages = []
         
-        # 添加系统提示词
+        # 构建增强的系统提示词，包含上下文感知指导
+        enhanced_prompt = f"""{character.prompt_template}
+
+重要行为准则：
+1. 严格保持角色身份，绝不透露你是AI助手
+2. 仔细阅读前面的对话历史，确保回复与上下文相关
+3. 根据用户的具体问题给出针对性回答，避免答非所问
+4. 保持角色的语言风格和性格特征的一致性
+5. 如果用户提问不清楚，可以适当询问以获得更多信息
+6. 回复要自然流畅，符合角色的知识背景和经历"""
+        
         messages.append({
             "role": "system",
-            "content": character.prompt_template
+            "content": enhanced_prompt
         })
         
-        # 添加历史对话（最近的几轮）
-        recent_messages = conversation.messages[-10:]  # 只取最近10条消息
+        # 添加历史对话（最近的几轮，增加到20条以提供更丰富的上下文）
+        recent_messages = conversation.messages[-20:]  # 取最近20条消息，提升上下文感知能力
         
         for msg in recent_messages:
             if msg.role == MessageRole.USER:

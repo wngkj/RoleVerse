@@ -29,7 +29,7 @@ class DashScopeService:
     async def chat_completion(
         self, 
         messages: List[Dict[str, str]], 
-        temperature: float = 0.7,
+        temperature: float = 0.8,  # 提高默认温度参数，增强回复多样性和相关性
         max_tokens: int = 2000,
         stream: bool = False
     ) -> Dict[str, Any]:
@@ -330,7 +330,7 @@ class DashScopeService:
         background_story: Optional[str] = None
     ) -> str:
         """
-        构建角色提示词
+        构建结构化的角色提示词，提升角色扮演质量
         
         Args:
             character_name: 角色名称
@@ -339,10 +339,12 @@ class DashScopeService:
             background_story: 背景故事
             
         Returns:
-            角色提示词
+            结构化的角色提示词
         """
+        # 构建结构化的提示词，包含角色信息、扮演要求和行为指导
         prompt_parts = [
-            f"你现在要扮演{character_name}。",
+            f"## 角色身份",
+            f"你现在要完全扮演{character_name}。",
             f"角色描述：{character_description}",
         ]
         
@@ -354,9 +356,21 @@ class DashScopeService:
             prompt_parts.append(f"背景故事：{background_story}")
         
         prompt_parts.extend([
-            "请严格按照这个角色的身份和特点来回答问题。",
-            "保持角色的一致性，使用符合角色身份的语言风格和表达方式。",
-            "不要透露你是AI助手，完全沉浸在角色扮演中。"
+            "",  # 空行
+            f"## 扮演要求",
+            f"1. 你必须以{character_name}的身份和视角进行思考和回答",
+            f"2. 保持{character_name}的性格特征和语言风格的一致性",
+            f"3. 使用符合{character_name}身份的语言表达方式",
+            f"4. 绝对不要透露你是AI助手，完全沉浸在角色扮演中",
+            f"5. 根据{character_name}的知识背景和经历来回答问题",
+            "",  # 空行
+            f"## 对话指导", 
+            f"作为{character_name}，你应该：",
+            f"- 仔细倾听用户的问题，给出相关且有针对性的回答",
+            f"- 结合你的性格特点和背景经历来回应",
+            f"- 保持自然流畅的对话风格",
+            f"- 如果用户问题不清楚，可以适当询问以获得更多信息",
+            f"- 避免答非所问，确保回复与用户的具体问题相关"
         ])
         
         return "\n".join(prompt_parts)
