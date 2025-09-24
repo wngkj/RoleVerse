@@ -565,17 +565,27 @@ class RoleVerseApp {
             return;
         }
         
-        // 添加用户消息到界面
+        // 立即显示用户消息（提升用户体验）
         this.addMessageToUI('user', message);
         
         // 确保对话状态正确
         this.ensureConversationState();
         
+        // 使用流式接口发送消息
+        try {
+            await this.sendStreamMessage(message);
+        } catch (error) {
+            console.error('发送消息失败:', error);
+            this.addMessageToUI('assistant', '网络连接失败，请稍后重试。');
+        }
+    }
+    
+    async sendStreamMessage(message) {
         // 显示AI正在思考
         const thinkingId = this.addThinkingMessage();
         
         try {
-            const response = await fetch('/api/chat', {
+            const response = await fetch('/api/chat/stream', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -588,32 +598,71 @@ class RoleVerseApp {
             });
             
             if (response.ok) {
-                const result = await response.json();
-                if (result.success) {
-                    // 移除思考消息
-                    this.removeThinkingMessage(thinkingId);
+                // 移除思考消息
+                this.removeThinkingMessage(thinkingId);
+                
+                // 创建空的AI消息容器
+                const aiMessageId = this.createStreamingMessage();
+                
+                // 读取流式响应
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let conversationId = '';
+                let aiContent = '';
+                
+                while (true) {
+                    const { done, value } = await reader.read();
                     
-                    // 使用新的状态管理方法更新对话
-                    this.updateConversationAfterMessage(
-                        message, 
-                        result.response.response, 
-                        result.response.conversation_id
-                    );
+                    if (done) {
+                        break;
+                    }
                     
-                    // 添加AI回复到界面
-                    this.addMessageToUI('assistant', result.response.response);
+                    buffer += decoder.decode(value, { stream: true });
                     
-                    // 重新加载对话列表（异步执行，不阻塞当前对话）
-                    this.loadConversations().catch(console.error);
+                    // 处理缓冲区中的数据
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop(); // 保留未完整的行
                     
-                } else {
-                    this.removeThinkingMessage(thinkingId);
-                    this.addMessageToUI('assistant', '抱歉，我现在无法回复您的消息。');
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.substring(6));
+                                
+                                if (data.type === 'start') {
+                                    conversationId = data.conversation_id;
+                                } else if (data.type === 'chunk') {
+                                    aiContent += data.content;
+                                    this.updateStreamingMessage(aiMessageId, aiContent);
+                                } else if (data.type === 'end') {
+                                    // 流式输出完成
+                                    console.log('流式输出完成');
+                                } else if (data.type === 'error') {
+                                    throw new Error(data.error);
+                                }
+                            } catch (e) {
+                                console.error('解析SSE数据失败:', e);
+                            }
+                        }
+                    }
                 }
+                
+                // 更新本地对话状态
+                if (conversationId && aiContent) {
+                    this.currentConversation.conversation_id = conversationId;
+                    this.updateLocalConversationState(message, aiContent, conversationId);
+                    
+                    // 异步刷新对话列表
+                    this.loadConversations().catch(console.error);
+                }
+                
+            } else {
+                this.removeThinkingMessage(thinkingId);
+                this.addMessageToUI('assistant', '抱歉，我现在无法回复您的消息。');
             }
         } catch (error) {
-            console.error('发送消息失败:', error);
             this.removeThinkingMessage(thinkingId);
+            console.error('流式聊天失败:', error);
             this.addMessageToUI('assistant', '网络连接失败，请稍后重试。');
         }
     }
@@ -641,6 +690,46 @@ class RoleVerseApp {
         
         // 滚动到底部
         container.scrollTop = container.scrollHeight;
+    }
+    
+    createStreamingMessage() {
+        const container = document.getElementById('chat-messages');
+        if (!container) return null;
+        
+        const messageId = 'streaming-' + Date.now();
+        const avatarSrc = this.currentCharacter?.avatar_url || '/static/images/default-avatar.svg';
+        
+        const messageElement = document.createElement('div');
+        messageElement.id = messageId;
+        messageElement.className = 'message assistant';
+        messageElement.innerHTML = `
+            <img src=\"${avatarSrc}\" alt=\"头像\" class=\"message-avatar\">
+            <div class=\"message-content\">
+                <div class=\"streaming-content\"></div>
+                <div class=\"message-time\">${new Date().toLocaleTimeString()}</div>
+            </div>
+        `;
+        
+        container.appendChild(messageElement);
+        container.scrollTop = container.scrollHeight;
+        
+        return messageId;
+    }
+    
+    updateStreamingMessage(messageId, content) {
+        const messageElement = document.getElementById(messageId);
+        if (messageElement) {
+            const contentElement = messageElement.querySelector('.streaming-content');
+            if (contentElement) {
+                contentElement.textContent = content;
+                
+                // 滚动到底部
+                const container = document.getElementById('chat-messages');
+                if (container) {
+                    container.scrollTop = container.scrollHeight;
+                }
+            }
+        }
     }
     
     addThinkingMessage() {
@@ -710,14 +799,14 @@ class RoleVerseApp {
         return this.currentConversation;
     }
     
-    updateConversationAfterMessage(userMessage, aiResponse, conversationId) {
-        // 更新对话信息
+    updateLocalConversationState(userMessage, aiResponse, conversationId) {
+        // 更新本地对话状态，与后端保持一致
         const conversation = this.ensureConversationState();
         
         // 设置conversation_id
         conversation.conversation_id = conversationId;
         
-        // 添加消息到对话记录
+        // 添加消息到本地对话记录（仅作为本地状态管理）
         conversation.messages.push({
             role: 'user',
             content: userMessage,
@@ -730,9 +819,10 @@ class RoleVerseApp {
             timestamp: new Date().toISOString()
         });
         
-        console.log('对话状态已更新:', {
+        console.log('本地对话状态已更新:', {
             conversationId,
-            messageCount: conversation.messages.length
+            messageCount: conversation.messages.length,
+            lastMessage: aiResponse.substring(0, 50) + '...'
         });
     }
     

@@ -215,11 +215,13 @@ class ConversationService:
             if not character:
                 raise Exception("角色不存在")
             
-            # 构建对话历史
-            if conversation:
-                messages = await self._build_chat_messages(conversation, character)
-            else:
-                messages = [{"role": "system", "content": character.prompt_template}]
+            # 重新获取对话以确保包含最新的用户消息
+            updated_conversation = await self.get_conversation(conversation_id)
+            if not updated_conversation:
+                raise Exception("无法获取更新后的对话")
+            
+            # 构建对话历史（使用最新的对话状态）
+            messages = await self._build_chat_messages(updated_conversation, character)
             
             # 调用AI生成回复，使用更高的温度参数提升回复多样性
             ai_response = await self.dashscope.chat_completion(messages, temperature=0.8)
@@ -291,17 +293,24 @@ class ConversationService:
         # 添加历史对话（最近的几轮，增加到20条以提供更丰富的上下文）
         recent_messages = conversation.messages[-20:]  # 取最近20条消息，提升上下文感知能力
         
-        for msg in recent_messages:
+        # 添加调试日志，追踪对话同步问题
+        logger.info(f"构建对话历史 - 对话ID: {conversation.conversation_id}, 总消息数: {len(conversation.messages)}, 使用最近: {len(recent_messages)}条")
+        
+        for i, msg in enumerate(recent_messages):
             if msg.role == MessageRole.USER:
                 messages.append({
                     "role": "user",
                     "content": msg.content
                 })
+                logger.debug(f"用户消息[{i}]: {msg.content[:50]}...")
             elif msg.role == MessageRole.ASSISTANT:
                 messages.append({
                     "role": "assistant",
                     "content": msg.content
                 })
+                logger.debug(f"AI消息[{i}]: {msg.content[:50]}...")
+        
+        logger.info(f"最终构建的消息链长度: {len(messages)} (包含1条系统提示 + {len(messages)-1}条对话历史)")
         
         return messages
     

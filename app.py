@@ -1,6 +1,8 @@
 import asyncio
 import logging
-from flask import Flask, render_template, request, jsonify, session, send_from_directory
+import json
+import asyncio
+from flask import Flask, render_template, request, jsonify, session, send_from_directory, Response
 from flask_cors import CORS
 from config.settings import settings
 from backend.services.user_service import user_service
@@ -270,6 +272,81 @@ def chat():
         
     except Exception as e:
         logger.error(f"聊天异常: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/chat/stream', methods=['POST'])
+def chat_stream():
+    """流式聊天接口，支持实时输出AI回复"""
+    try:
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({'success': False, 'error': '未登录'}), 401
+        
+        data = request.get_json()
+        character_id = data.get('character_id')
+        message = data.get('message')
+        conversation_id = data.get('conversation_id')
+        
+        if not character_id or not message:
+            return jsonify({'success': False, 'error': '参数不完整'}), 400
+        
+        # 创建聊天请求
+        from backend.models.data_models import ChatRequest, MessageType
+        chat_request = ChatRequest(
+            user_id=user_id,
+            character_id=character_id,
+            conversation_id=conversation_id,
+            message=message,
+            message_type=MessageType.TEXT
+        )
+        
+        # 使用生成器返回SSE响应
+        def generate_response():
+            try:
+                # 暂时使用普通聊天接口，后续实现流式输出
+                response = run_async(conversation_service.chat(chat_request))
+                response_data = response.model_dump()
+                response_data['timestamp'] = response_data['timestamp'].isoformat()
+                
+                # 模拟流式输出效果
+                content = response_data['response']
+                
+                # 先发送对话初始信息
+                yield f"data: {json.dumps({'type': 'start', 'conversation_id': response_data['conversation_id']}, ensure_ascii=False)}\n\n"
+                
+                # 逐字发送内容
+                for i, char in enumerate(content):
+                    chunk_data = {
+                        'type': 'chunk',
+                        'content': char,
+                        'index': i
+                    }
+                    yield f"data: {json.dumps(chunk_data, ensure_ascii=False)}\n\n"
+                    # 模拟打字机效果
+                    import time
+                    time.sleep(0.05)  # 50ms延时
+                
+                # 发送完成信号
+                yield f"data: {json.dumps({'type': 'end'}, ensure_ascii=False)}\n\n"
+                
+            except Exception as e:
+                logger.error(f"流式聊天异常: {e}")
+                yield f"data: {json.dumps({'type': 'error', 'error': str(e)}, ensure_ascii=False)}\n\n"
+        
+        from flask import Response
+        return Response(
+            generate_response(),
+            mimetype='text/event-stream',
+            headers={
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive',
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Headers': 'Content-Type'
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"流式聊天初始化异常: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/conversations/batch-delete', methods=['POST'])
