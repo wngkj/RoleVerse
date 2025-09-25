@@ -6,6 +6,8 @@ from typing import Dict, List, Any, Optional, AsyncGenerator, Union
 from datetime import datetime
 import requests
 from config.settings import settings
+from dashscope.audio.asr import (Recognition, RecognitionCallback,RecognitionResult)
+import pyaudio
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +31,7 @@ class DashScopeService:
     async def chat_completion(
         self, 
         messages: List[Dict[str, str]], 
-        temperature: float = 0.8,  # 提高默认温度参数，增强回复多样性和相关性
+        temperature: float = 0.8,
         max_tokens: int = 2000,
         stream: bool = False
     ) -> Dict[str, Any]:
@@ -90,58 +92,90 @@ class DashScopeService:
                 'error': str(e)
             }
     
-    async def speech_recognition(self, audio_data: bytes, format: str = 'wav') -> Dict[str, Any]:
+    async def speech_recognition(self) -> Dict[str, Any]:
         """
-        语音识别
+        语音识别 - 使用 DashScope 提供的语音识别API
+        """
+        global process, final_text, stop
         
-        Args:
-            audio_data: 音频数据
-            format: 音频格式
-            
-        Returns:
-            识别结果
-        """
+        final_text = None
+        stop = False
+        
+        class Callback(RecognitionCallback):
+            def on_open(self) -> None:
+                global process
+                print('RecognitionCallback open.')
+
+                # 使用 PyAudio 代替 arecord 进行音频录制
+                p = pyaudio.PyAudio()
+
+                # 配置音频流
+                stream = p.open(format=pyaudio.paInt16,
+                                channels=1,
+                                rate=16000,
+                                input=True,
+                                frames_per_buffer=3200)
+
+                process = stream
+
+            def on_close(self) -> None:
+                global process
+                print('RecognitionCallback close.')
+                if process:
+                    process.stop_stream()
+                    process.close()
+                    process = None
+
+            def on_event(self, result: RecognitionResult) -> None:
+                global final_text, stop
+                sentence = result.get_sentence()
+
+                if isinstance(sentence, dict) and sentence.get('end_time') is not None:
+                    print('Final sentence: ', sentence.get('text'))
+                    final_text = sentence.get('text')
+                    stop = True
+                print('RecognitionCallback sentence: ', sentence)
+
+
+        callback = Callback()
+        recognition = Recognition(model=self.speech_recognition_model,
+                                format='pcm',
+                                sample_rate=16000,
+                                callback=callback)
+        recognition.start()
+
         try:
-            # 将音频数据转换为base64
-            audio_base64 = base64.b64encode(audio_data).decode('utf-8')
-            
-            url = f"{self.base_url}/services/audio/asr/recognition"
-            
-            payload = {
-                "model": self.speech_recognition_model,
-                "input": {
-                    "audio": audio_base64,
-                    "format": format
-                },
-                "parameters": {
-                    "sample_rate": 16000
-                }
-            }
-            
-            response = await self._make_async_request("POST", url, json=payload)
-            
-            if response.get("status_code") == 200:
-                output = response.get("output", {})
-                text = output.get("text", "")
-                return {
-                    'success': True,
-                    'text': text,
-                    'request_id': response.get("request_id", "")
-                }
-            
+            while not stop:
+                if process:
+                    # 从 PyAudio 流中读取音频数据
+                    data = process.read(3200)
+                    if not data:
+                        break
+                    recognition.send_audio_frame(data)
+                else:
+                    print("Process is None.")
+                    break
+        except KeyboardInterrupt:
+            print("程序被手动中断")
+        finally:
+            recognition.stop()
+            if process:
+                process.stop_stream()
+                process.close()
+
+
+        if final_text:
             return {
-                'success': False,
-                'error': response.get("message", "语音识别失败")
+                'success': True,
+                'recognized_text': final_text
             }
-                
-        except Exception as e:
-            logger.error(f"语音识别异常: {e}")
-            return {
-                'success': False,
-                'error': str(e)
-            }
+        
+        return {
+            'success': False,
+            'error': '语音识别失败'
+        }
     
-    async def speech_synthesis(
+    async def speech_synthesis(  # pyright: ignore[reportUnreachable]
         self, 
         text: str, 
         voice: str = 'zhifeng',

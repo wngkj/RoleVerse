@@ -345,7 +345,15 @@ class AudioManager {
                     await this.app.loadConversations();
                     
                 } else {
-                    this.app.addMessageToUI('assistant', '抱歉，语音处理失败: ' + result.error);
+                    // 优化错误提示，提供更好的用户体验
+                    const errorMsg = result.error || '语音处理失败';
+                    
+                    // 如果是语音识别问题，提供降级方案
+                    if (errorMsg.includes('语音识别功能暂时不可用')) {
+                        this.showVoiceUnavailableMessage();
+                    } else {
+                        this.app.addMessageToUI('assistant', '抱歉，语音处理失败: ' + errorMsg);
+                    }
                 }
             } else {
                 this.app.removeThinkingMessage(processingId);
@@ -412,6 +420,22 @@ class AudioManager {
         }
     }
     
+    showVoiceUnavailableMessage() {
+        // 显示语音功能不可用的友好提示
+        const message = `
+            🎤 语音功能暂时不可用<br><br>
+            您可以：<br>
+            • 使用文字输入进行对话<br>
+            • 稍后再试语音功能<br><br>
+            <small>技术原因：API服务配置需要更新</small>
+        `;
+        
+        this.app.addMessageToUI('assistant', message);
+        
+        // 同时显示模态框提示
+        this.app.showModal('语音功能暂时不可用，请使用文字输入进行对话。');
+    }
+
     // 获取可用音色列表
     async getAvailableVoices() {
         try {
