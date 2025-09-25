@@ -15,12 +15,6 @@ class CharacterService:
     def __init__(self):
         self.redis = redis_client
         self.dashscope = dashscope_service
-        # 移除默认角色初始化，所有角色都通过搜索创建
-    
-    # 移除默认角色初始化功能，所有角色都通过搜索创建
-    # def _init_default_characters(self):
-    #     """初始化默认角色"""
-    #     pass  # 不再预置默认角色
     
     async def create_character(
         self, 

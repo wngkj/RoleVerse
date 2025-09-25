@@ -408,7 +408,7 @@ def speech_to_text():
         if not audio_data:
             return jsonify({'success': False, 'error': '音频数据不能为空'}), 400
         
-        result = run_async(audio_service.speech_to_text(audio_data))
+        result = run_async(audio_service.speech_to_text())
         return jsonify(result)
         
     except Exception as e:

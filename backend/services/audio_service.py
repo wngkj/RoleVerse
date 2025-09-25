@@ -27,35 +27,21 @@ class AudioService:
             logger.error(f"创建音频目录失败: {e}")
     
     async def speech_to_text(
-        self, 
-        audio_data: Union[bytes, str], 
-        format: str = 'wav'
+        self,  
+        format: str = 'pcm'
     ) -> Dict[str, Any]:
         """
-        语音转文字
+        实时语音转文字
         
         Args:
-            audio_data: 音频数据（bytes或base64字符串）
             format: 音频格式
             
         Returns:
             识别结果
         """
         try:
-            # 如果输入是base64字符串，先解码
-            if isinstance(audio_data, str):
-                try:
-                    audio_bytes = base64.b64decode(audio_data)
-                except Exception as e:
-                    return {
-                        'success': False,
-                        'error': f'音频数据解码失败: {e}'
-                    }
-            else:
-                audio_bytes = audio_data
-            
-            # 调用语音识别服务
-            result = await self.dashscope.speech_recognition(audio_bytes, format)
+            # 调用实时语音识别服务
+            result = await self.dashscope.speech_recognition()
             
             if result['success']:
                 logger.info(f"语音识别成功: {result['text']}")
@@ -228,7 +214,7 @@ class AudioService:
         """
         try:
             # 1. 语音转文字
-            stt_result = await self.speech_to_text(audio_data)
+            stt_result = await self.speech_to_text()
             if not stt_result['success']:
                 return {
                     'success': False,

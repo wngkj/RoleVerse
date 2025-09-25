@@ -6,8 +6,17 @@ from typing import Dict, List, Any, Optional, AsyncGenerator, Union
 from datetime import datetime
 import requests
 from config.settings import settings
-from dashscope.audio.asr import (Recognition, RecognitionCallback,RecognitionResult)
-import pyaudio
+
+# 尝试导入pyaudio，如果失败则设置为None
+try:
+    import pyaudio
+    PYAUDIO_AVAILABLE = True
+except ImportError:
+    pyaudio = None
+    PYAUDIO_AVAILABLE = False
+    logging.warning("PyAudio未安装，语音识别功能将受限")
+
+from dashscope.audio.asr import (Recognition, RecognitionCallback, RecognitionResult)
 
 logger = logging.getLogger(__name__)
 
@@ -92,88 +101,112 @@ class DashScopeService:
                 'error': str(e)
             }
     
-    async def speech_recognition(self) -> Dict[str, Any]:
+    async def speech_recognition(self, audio_data: Optional[bytes] = None, format: str = 'pcm') -> Dict[str, Any]:
         """
-        语音识别 - 使用 DashScope 提供的语音识别API
+        实时语音识别
+        
+        Args:
+            audio_data: 音频数据（用于文件识别，此处保留但不使用）
+            format: 音频格式
+            
+        Returns:
+            识别结果
         """
-        global process, final_text, stop
-        
-        final_text = None
-        stop = False
-        
-        class Callback(RecognitionCallback):
-            def on_open(self) -> None:
-                global process
-                print('RecognitionCallback open.')
-
-                # 使用 PyAudio 代替 arecord 进行音频录制
-                p = pyaudio.PyAudio()
-
-                # 配置音频流
-                stream = p.open(format=pyaudio.paInt16,
-                                channels=1,
-                                rate=16000,
-                                input=True,
-                                frames_per_buffer=3200)
-
-                process = stream
-
-            def on_close(self) -> None:
-                global process
-                print('RecognitionCallback close.')
-                if process:
-                    process.stop_stream()
-                    process.close()
-                    process = None
-
-            def on_event(self, result: RecognitionResult) -> None:
-                global final_text, stop
-                sentence = result.get_sentence()
-
-                if isinstance(sentence, dict) and sentence.get('end_time') is not None:
-                    print('Final sentence: ', sentence.get('text'))
-                    final_text = sentence.get('text')
-                    stop = True
-                print('RecognitionCallback sentence: ', sentence)
-
-
-        callback = Callback()
-        recognition = Recognition(model=self.speech_recognition_model,
-                                format='pcm',
-                                sample_rate=16000,
-                                callback=callback)
-        recognition.start()
-
         try:
-            while not stop:
-                if process:
-                    # 从 PyAudio 流中读取音频数据
-                    data = process.read(3200)
-                    if not data:
+            # 检查PyAudio是否可用
+            if not PYAUDIO_AVAILABLE or pyaudio is None:
+                return {
+                    'success': False,
+                    'error': 'PyAudio未安装，无法进行实时语音识别。请安装PyAudio库。'
+                }
+            
+            # 创建回调类处理识别结果
+            class RecognitionCallbackImpl(RecognitionCallback):
+                def __init__(self):
+                    self.final_text = None
+                    self.stop = False
+                    self.process = None
+
+                def on_open(self) -> None:
+                    print('RecognitionCallback open.')
+                    # 使用 PyAudio 进行音频录制
+                    if pyaudio is not None:
+                        p = pyaudio.PyAudio()
+                        # 配置音频流
+                        stream = p.open(format=pyaudio.paInt16,
+                                        channels=1,
+                                        rate=16000,
+                                        input=True,
+                                        frames_per_buffer=3200)
+                        self.process = stream
+
+                def on_close(self) -> None:
+                    print('RecognitionCallback close.')
+                    if self.process:
+                        self.process.stop_stream()
+                        self.process.close()
+                        self.process = None
+
+                def on_event(self, result: RecognitionResult) -> None:
+                    sentence = result.get_sentence()
+                    # 如果返回的 sentence 是字典类型并且 'end_time' 不为 None，表示识别结束
+                    if isinstance(sentence, dict) and sentence.get('end_time') is not None:
+                        print('Final sentence: ', sentence.get('text'))
+                        self.final_text = sentence.get('text')
+                        self.stop = True
+                    print('RecognitionCallback sentence: ', sentence)
+
+            # 创建回调实例
+            callback = RecognitionCallbackImpl()
+            
+            # 创建识别实例
+            recognition = Recognition(
+                model='paraformer-realtime-v2',
+                format='pcm',
+                sample_rate=16000,
+                callback=callback
+            )
+            
+            # 启动识别
+            recognition.start()
+            
+            # 模拟音频数据流处理
+            try:
+                while not callback.stop:
+                    if callback.process and pyaudio is not None:
+                        # 从 PyAudio 流中读取音频数据
+                        data = callback.process.read(3200)
+                        if data:
+                            recognition.send_audio_frame(data)
+                    else:
+                        print("Process is None.")
                         break
-                    recognition.send_audio_frame(data)
-                else:
-                    print("Process is None.")
-                    break
-        except KeyboardInterrupt:
-            print("程序被手动中断")
-        finally:
-            recognition.stop()
-            if process:
-                process.stop_stream()
-                process.close()
-
-
-        if final_text:
+            except Exception as e:
+                print(f"音频处理异常: {e}")
+            finally:
+                recognition.stop()
+                if callback.process:
+                    callback.process.stop_stream()
+                    callback.process.close()
+            
+            # 返回识别结果
+            if callback.final_text:
+                return {
+                    'success': True,
+                    'text': callback.final_text
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': '未识别到有效语音内容'
+                }
+                
+        except Exception as e:
+            logger.error(f"语音识别异常: {e}")
             return {
-                'success': True,
-                'recognized_text': final_text
+                'success': False,
+                'error': str(e)
             }
-        
-        return {
-            'success': False,
-            'error': '语音识别失败'
-        }
     
     async def speech_synthesis(  # pyright: ignore[reportUnreachable]
         self, 
