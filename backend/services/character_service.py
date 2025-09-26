@@ -242,42 +242,7 @@ class CharacterService:
         except Exception as e:
             logger.error(f"更新角色异常: {e}")
             return False
-    
-    async def delete_character(self, character_id: str) -> bool:
-        """删除角色"""
-        try:
-            character = await self.get_character_by_id(character_id)
-            if not character:
-                return False
-            
-            # 删除角色数据
-            character_key = f"character:{character_id}"
-            character_name_key = f"character_name:{character.name}"
-            
-            success1 = self.redis.delete_data(character_key)
-            success2 = self.redis.delete_data(character_name_key)
-            
-            return success1 and success2
-            
-        except Exception as e:
-            logger.error(f"删除角色异常: {e}")
-            return False
-    
-    async def init_default_characters_if_needed(self):
-        """不再初始化默认角色，所有角色都通过搜索创建"""
-        # 移除默认角色初始化逻辑
-        logger.info("系统不再预置默认角色，所有角色都将通过搜索创建")
-        pass
-    
-    async def get_character_prompt(self, character_id: str) -> Optional[str]:
-        """获取角色提示词"""
-        try:
-            character = await self.get_character_by_id(character_id)
-            return character.prompt_template if character else None
-            
-        except Exception as e:
-            logger.error(f"获取角色提示词异常: {e}")
-            return None
+
     
     async def create_smart_character(self, character_name: str) -> Optional[Dict[str, Any]]:
         """
@@ -400,47 +365,6 @@ class CharacterService:
             'personality_traits': ['智慧', '友善', '有趣'],
             'background_story': f'{character_name}是一个有着独特经历和丰富内心世界的角色，愿意与人分享思想和经历。'
         }
-
-    async def update_all_character_prompts(self) -> bool:
-        """
-        更新所有角色的提示词为新的结构化格式
-        
-        Returns:
-            是否成功
-        """
-        try:
-            # 获取所有角色
-            characters = await self.get_character_list()
-            
-            for char_data in characters:
-                character_id = char_data['character_id']
-                character = await self.get_character_by_id(character_id)
-                
-                if character:
-                    # 重新生成提示词
-                    new_prompt = self.dashscope.build_character_prompt(
-                        character.name,
-                        character.description,
-                        character.personality_traits,
-                        character.background_story
-                    )
-                    
-                    # 更新角色
-                    success = await self.update_character(
-                        character_id, 
-                        prompt_template=new_prompt
-                    )
-                    
-                    if success:
-                        logger.info(f"角色 {character.name} 的提示词更新成功")
-                    else:
-                        logger.error(f"角色 {character.name} 的提示词更新失败")
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"更新所有角色提示词异常: {e}")
-            return False
 
 # 创建全局角色服务实例
 character_service = CharacterService()

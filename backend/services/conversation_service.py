@@ -454,22 +454,7 @@ class ConversationService:
                         self.redis.list_push(list_key, item)
         except Exception as e:
             logger.error(f"从列表中移除元素异常: {e}")
-    
-    async def update_conversation_title(self, conversation_id: str, title: str) -> bool:
-        """更新对话标题"""
-        try:
-            conversation = await self.get_conversation(conversation_id)
-            if not conversation:
-                return False
-            
-            conversation.title = title
-            conversation.updated_at = datetime.now()
-            
-            return await self._save_conversation(conversation)
-            
-        except Exception as e:
-            logger.error(f"更新对话标题异常: {e}")
-            return False
+
 
 # 创建全局对话服务实例
 conversation_service = ConversationService()

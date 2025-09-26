@@ -486,22 +486,8 @@ def uploaded_file(filename):
     """提供上传的文件"""
     return send_from_directory(settings.UPLOAD_FOLDER, filename)
 
-# ========== 应用初始化 ==========
-
-def init_app():
-    """应用初始化"""
-    try:
-        # 初始化默认角色
-        run_async(character_service.init_default_characters_if_needed())
-        logger.info("应用初始化完成")
-    except Exception as e:
-        logger.error(f"应用初始化异常: {e}")
-
 if __name__ == '__main__':
     logger.info("启动RoleVerse应用...")
-    
-    # 初始化应用
-    init_app()
     
     app.run(
         host=settings.HOST,
