@@ -6,15 +6,7 @@ from typing import Dict, List, Any, Optional, AsyncGenerator, Union
 from datetime import datetime
 import requests
 from config.settings import settings
-
-# 尝试导入pyaudio，如果失败则设置为None
-try:
-    import pyaudio
-    PYAUDIO_AVAILABLE = True
-except ImportError:
-    pyaudio = None
-    PYAUDIO_AVAILABLE = False
-    logging.warning("PyAudio未安装，语音识别功能将受限")
+import pyaudio
 
 from dashscope.audio.asr import (Recognition, RecognitionCallback, RecognitionResult)
 
@@ -101,6 +93,10 @@ class DashScopeService:
                 'error': str(e)
             }
     
+    process = None
+    final_text = None
+    stop = False
+    
     async def speech_recognition(self, audio_data: Optional[bytes] = None, format: str = 'pcm') -> Dict[str, Any]:
         """
         实时语音识别
@@ -113,51 +109,47 @@ class DashScopeService:
             识别结果
         """
         try:
-            # 检查PyAudio是否可用
-            if not PYAUDIO_AVAILABLE or pyaudio is None:
-                return {
-                    'success': False,
-                    'error': 'PyAudio未安装，无法进行实时语音识别。请安装PyAudio库。'
-                }
             
-            # 创建回调类处理识别结果
-            class RecognitionCallbackImpl(RecognitionCallback):
-                def __init__(self):
-                    self.final_text = None
-                    self.stop = False
-                    self.process = None
 
+
+            class Callback(RecognitionCallback):
                 def on_open(self) -> None:
+                    global process
                     print('RecognitionCallback open.')
-                    # 使用 PyAudio 进行音频录制
-                    if pyaudio is not None:
-                        p = pyaudio.PyAudio()
-                        # 配置音频流
-                        stream = p.open(format=pyaudio.paInt16,
-                                        channels=1,
-                                        rate=16000,
-                                        input=True,
-                                        frames_per_buffer=3200)
-                        self.process = stream
+
+                    # 使用 PyAudio 代替 arecord 进行音频录制
+                    p = pyaudio.PyAudio()
+
+                    # 配置音频流
+                    stream = p.open(format=pyaudio.paInt16,
+                                    channels=1,
+                                    rate=16000,
+                                    input=True,
+                                    frames_per_buffer=3200)
+
+                    process = stream
 
                 def on_close(self) -> None:
+                    global process
                     print('RecognitionCallback close.')
-                    if self.process:
-                        self.process.stop_stream()
-                        self.process.close()
-                        self.process = None
+                    if process:
+                        process.stop_stream()
+                        process.close()
+                        process = None
 
                 def on_event(self, result: RecognitionResult) -> None:
+                    global final_text, stop
                     sentence = result.get_sentence()
+
                     # 如果返回的 sentence 是字典类型并且 'end_time' 不为 None，表示识别结束
                     if isinstance(sentence, dict) and sentence.get('end_time') is not None:
                         print('Final sentence: ', sentence.get('text'))
-                        self.final_text = sentence.get('text')
-                        self.stop = True
+                        final_text = sentence.get('text')
+                        stop = True
                     print('RecognitionCallback sentence: ', sentence)
 
             # 创建回调实例
-            callback = RecognitionCallbackImpl()
+            callback = Callback()
             
             # 创建识别实例
             recognition = Recognition(
@@ -172,10 +164,10 @@ class DashScopeService:
             
             # 模拟音频数据流处理
             try:
-                while not callback.stop:
-                    if callback.process and pyaudio is not None:
+                while not stop:
+                    if process and pyaudio is not None:
                         # 从 PyAudio 流中读取音频数据
-                        data = callback.process.read(3200)
+                        data = process.read(3200)
                         if data:
                             recognition.send_audio_frame(data)
                     else:
@@ -185,15 +177,15 @@ class DashScopeService:
                 print(f"音频处理异常: {e}")
             finally:
                 recognition.stop()
-                if callback.process:
-                    callback.process.stop_stream()
-                    callback.process.close()
+                if process:
+                    process.stop_stream()
+                    process.close()
             
             # 返回识别结果
-            if callback.final_text:
+            if final_text:
                 return {
                     'success': True,
-                    'text': callback.final_text
+                    'text': final_text
                 }
             else:
                 return {
