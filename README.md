@@ -76,3 +76,6 @@ python app.py
 ```
 
 打开浏览器，访问 http://127.0.0.1:5000
+
+### 4. demo视频
+https://github.com/user-attachments/assets/470f8bda-7c92-41c1-b374-fd4276e10bfd
