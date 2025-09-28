@@ -4,7 +4,7 @@
 
 ## 🚀 技术栈
 
-- **后端**: Python + Flask + LangChain 0.3
+- **后端**: Python + Flask
 - **前端**: HTML + CSS + JavaScript  
 - **数据库**: Redis
 - **AI服务**: 阿里百炼平台 (Qwen系列模型)
