@@ -593,7 +593,8 @@ class RoleVerseApp {
                 body: JSON.stringify({
                     character_id: this.currentCharacter.character_id,
                     message: message,
-                    conversation_id: this.currentConversation?.conversation_id
+                    conversation_id: this.currentConversation?.conversation_id,
+                    input_mode: this.inputMode // 传递输入模式
                 })
             });
             
@@ -610,6 +611,7 @@ class RoleVerseApp {
                 let buffer = '';
                 let conversationId = '';
                 let aiContent = '';
+                let audioData = null; // 音频数据
                 
                 while (true) {
                     const { done, value } = await reader.read();
@@ -631,12 +633,20 @@ class RoleVerseApp {
                                 
                                 if (data.type === 'start') {
                                     conversationId = data.conversation_id;
+                                } else if (data.type === 'audio') {
+                                    // 保存音频数据
+                                    audioData = data.audio_data;
                                 } else if (data.type === 'chunk') {
                                     aiContent += data.content;
                                     this.updateStreamingMessage(aiMessageId, aiContent);
                                 } else if (data.type === 'end') {
                                     // 流式输出完成
                                     console.log('流式输出完成');
+                                    
+                                    // 如果有音频数据且在语音模式下，播放音频
+                                    if (audioData && this.inputMode === 'voice' && this.audioManager) {
+                                        await this.audioManager.playAudioFromBase64(audioData);
+                                    }
                                 } else if (data.type === 'error') {
                                     throw new Error(data.error);
                                 }
@@ -824,25 +834,6 @@ class RoleVerseApp {
             messageCount: conversation.messages.length,
             lastMessage: aiResponse.substring(0, 50) + '...'
         });
-    }
-    
-    // 语音相关方法将在下一部分实现
-    async toggleVoiceRecording() {
-        if (this.isRecording) {
-            this.stopRecording();
-        } else {
-            await this.startRecording();
-        }
-    }
-    
-    async startRecording() {
-        // 语音录制功能将在音频模块中实现
-        console.log('开始语音录制...');
-    }
-    
-    stopRecording() {
-        // 停止语音录制功能将在音频模块中实现
-        console.log('停止语音录制...');
     }
     
     // 添加删除对话的方法

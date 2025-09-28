@@ -2,13 +2,19 @@ import asyncio
 import base64
 import json
 import logging
+import os
+import threading
+import time
+import uuid
 from typing import Dict, List, Any, Optional, AsyncGenerator, Union
 from datetime import datetime
 import requests
 from config.settings import settings
 import pyaudio
 
-from dashscope.audio.asr import (Recognition, RecognitionCallback, RecognitionResult)
+# 导入实时语音合成相关模块
+from dashscope import SpeechSynthesizer
+import dashscope
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +34,9 @@ class DashScopeService:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
+        
+        # 设置DashScope API密钥
+        dashscope.api_key = self.api_key
     
     async def chat_completion(
         self, 
@@ -93,113 +102,79 @@ class DashScopeService:
                 'error': str(e)
             }
     
-    process = None
-    final_text = None
-    stop = False
-    
-    async def speech_recognition(self, audio_data: Optional[bytes] = None, format: str = 'pcm') -> Dict[str, Any]:
+    async def start_realtime_speech_synthesis(
+        self, 
+        text: str, 
+        voice: str = 'zhifeng',
+        format: str = 'pcm',
+        sample_rate: int = 24000
+    ) -> Dict[str, Any]:
         """
-        实时语音识别
+        开始实时语音合成
         
         Args:
-            audio_data: 音频数据（用于文件识别，此处保留但不使用）
+            text: 要合成的文本
+            voice: 音色
             format: 音频格式
+            sample_rate: 采样率
             
         Returns:
-            识别结果
+            合成结果
         """
         try:
+            # 根据格式选择对应的参数
+            if format == 'pcm' and sample_rate == 24000:
+                audio_format = 'pcm_24000'
+            elif format == 'pcm' and sample_rate == 16000:
+                audio_format = 'pcm_16000'
+            else:
+                audio_format = 'pcm_24000'  # 默认格式
             
-
-
-            class Callback(RecognitionCallback):
-                def on_open(self) -> None:
-                    global process
-                    print('RecognitionCallback open.')
-
-                    # 使用 PyAudio 代替 arecord 进行音频录制
-                    p = pyaudio.PyAudio()
-
-                    # 配置音频流
-                    stream = p.open(format=pyaudio.paInt16,
-                                    channels=1,
-                                    rate=16000,
-                                    input=True,
-                                    frames_per_buffer=3200)
-
-                    process = stream
-
-                def on_close(self) -> None:
-                    global process
-                    print('RecognitionCallback close.')
-                    if process:
-                        process.stop_stream()
-                        process.close()
-                        process = None
-
-                def on_event(self, result: RecognitionResult) -> None:
-                    global final_text, stop
-                    sentence = result.get_sentence()
-
-                    # 如果返回的 sentence 是字典类型并且 'end_time' 不为 None，表示识别结束
-                    if isinstance(sentence, dict) and sentence.get('end_time') is not None:
-                        print('Final sentence: ', sentence.get('text'))
-                        final_text = sentence.get('text')
-                        stop = True
-                    print('RecognitionCallback sentence: ', sentence)
-
-            # 创建回调实例
-            callback = Callback()
-            
-            # 创建识别实例
-            recognition = Recognition(
-                model='paraformer-realtime-v2',
-                format='pcm',
-                sample_rate=16000,
-                callback=callback
+            # 调用实时语音合成
+            response = SpeechSynthesizer.call(
+                model='sambert-zhichu-v1',
+                text=text,
+                voice=voice,
+                format=audio_format,
+                sample_rate=sample_rate
             )
             
-            # 启动识别
-            recognition.start()
-            
-            # 模拟音频数据流处理
-            try:
-                while not stop:
-                    if process and pyaudio is not None:
-                        # 从 PyAudio 流中读取音频数据
-                        data = process.read(3200)
-                        if data:
-                            recognition.send_audio_frame(data)
-                    else:
-                        print("Process is None.")
-                        break
-            except Exception as e:
-                print(f"音频处理异常: {e}")
-            finally:
-                recognition.stop()
-                if process:
-                    process.stop_stream()
-                    process.close()
-            
-            # 返回识别结果
-            if final_text:
-                return {
-                    'success': True,
-                    'text': final_text
-                }
-            else:
+            # 使用安全的方式访问响应属性
+            status_code = getattr(response, 'status_code', None)
+            if status_code == 200:
+                # 获取音频数据
+                output = getattr(response, 'output', None)
+                if output and hasattr(output, 'audio'):
+                    audio_data = output.audio
+                    if audio_data:
+                        # 返回Base64编码的音频数据
+                        audio_base64 = base64.b64encode(audio_data).decode('utf-8')
+                        return {
+                            'success': True,
+                            'audio_data': audio_base64,
+                            'audio_length': len(audio_data),
+                            'session_id': str(uuid.uuid4())
+                        }
+                
                 return {
                     'success': False,
-                    'error': '未识别到有效语音内容'
+                    'error': '未获取到音频数据'
                 }
-                
+            else:
+                # 获取错误信息
+                error_message = getattr(response, 'message', '语音合成失败')
+                return {
+                    'success': False,
+                    'error': error_message
+                }
+            
         except Exception as e:
-            logger.error(f"语音识别异常: {e}")
+            logger.error(f"启动实时语音合成异常: {e}")
             return {
                 'success': False,
                 'error': str(e)
             }
-    
+
     async def speech_synthesis(  # pyright: ignore[reportUnreachable]
         self, 
         text: str, 

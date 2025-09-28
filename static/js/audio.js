@@ -1,13 +1,18 @@
 class AudioManager {
     constructor(app) {
         this.app = app;
-        this.mediaRecorder = null;
-        this.audioChunks = [];
         this.isRecording = false;
         this.stream = null;
         this.audioContext = null;
         this.analyser = null;
         this.audioPlayer = document.getElementById('audio-player');
+        // 实时语音识别相关属性
+        this.recognitionSessionId = null;
+        this.audioProcessor = null;
+        this.recognizedText = '';
+        // 实时语音合成相关属性
+        this.isVoiceMode = false; // 是否为语音模式
+        this.audioBuffer = null; // 音频缓冲区
         
         this.init();
     }
@@ -80,41 +85,16 @@ class AudioManager {
                 }
             });
             
-            // 创建MediaRecorder
-            const options = {
-                mimeType: this.getSupportedMimeType(),
-                audioBitsPerSecond: 128000
-            };
-            
-            this.mediaRecorder = new MediaRecorder(this.stream, options);
-            this.audioChunks = [];
-            
-            // 设置事件监听器
-            this.mediaRecorder.ondataavailable = (event) => {
-                if (event.data.size > 0) {
-                    this.audioChunks.push(event.data);
-                }
-            };
-            
-            this.mediaRecorder.onstop = () => {
-                this.processRecording();
-            };
-            
-            this.mediaRecorder.onerror = (event) => {
-                console.error('录音错误:', event);
-                this.stopRecording();
-            };
-            
-            // 开始录音
-            this.mediaRecorder.start();
-            this.isRecording = true;
-            
             // 初始化音频可视化
             this.initAudioVisualization();
             
             // 更新UI
             this.updateRecordingUI(true);
             
+            // 开始实时语音识别
+            await this.startRealTimeSpeechRecognition();
+            
+            this.isRecording = true;
             return true;
             
         } catch (error) {
@@ -133,9 +113,23 @@ class AudioManager {
     }
     
     stopRecording() {
-        if (this.mediaRecorder && this.isRecording) {
-            this.mediaRecorder.stop();
+        if (this.isRecording) {
             this.isRecording = false;
+            
+            // 停止实时语音识别
+            this.stopRealTimeSpeechRecognition();
+            
+            // 停止音频处理
+            if (this.audioProcessor) {
+                this.audioProcessor.disconnect();
+                this.audioProcessor = null;
+            }
+            
+            // 关闭音频上下文
+            if (this.audioContext) {
+                this.audioContext.close();
+                this.audioContext = null;
+            }
             
             // 停止音频流
             if (this.stream) {
@@ -151,22 +145,305 @@ class AudioManager {
         }
     }
     
-    getSupportedMimeType() {
-        const types = [
-            'audio/wav',
-            'audio/webm;codecs=opus',
-            'audio/ogg;codecs=opus',
-            'audio/mp4',
-            'audio/webm'
-        ];
-        
-        for (const type of types) {
-            if (MediaRecorder.isTypeSupported(type)) {
-                return type;
+    // 开始实时语音识别
+    async startRealTimeSpeechRecognition() {
+        try {
+            // 调用后端API开始实时语音识别
+            const response = await fetch('/api/audio/start-speech-recognition', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    character_id: this.app.currentCharacter?.character_id,
+                    conversation_id: this.app.currentConversation?.conversation_id
+                })
+            });
+            
+            if (response.ok) {
+                const result = await response.json();
+                if (result.success) {
+                    console.log('开始实时语音识别，会话ID:', result.session_id);
+                    this.recognitionSessionId = result.session_id;
+                    
+                    // 开始音频数据流传输
+                    this.startAudioStreaming();
+                } else {
+                    throw new Error(result.error || '无法启动语音识别');
+                }
+            } else {
+                throw new Error('语音识别服务不可用');
             }
+        } catch (error) {
+            console.error('启动实时语音识别失败:', error);
+            this.app.showModal('语音识别启动失败: ' + error.message);
+            this.stopRecording();
+        }
+    }
+    
+    // 停止实时语音识别
+    async stopRealTimeSpeechRecognition() {
+        if (this.recognitionSessionId) {
+            try {
+                // 调用后端API停止语音识别，并获取最终识别文本
+                const response = await fetch('/api/audio/stop-speech-recognition', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        session_id: this.recognitionSessionId
+                    })
+                });
+                
+                if (response.ok) {
+                    const result = await response.json();
+                    console.log('停止语音识别结果:', result);
+                    if (result.success && result.text) {
+                        // 如果有最终识别文本，发送给角色
+                        this.onSpeechRecognized(result.text);
+                    } else if (result.success) {
+                        // 即使没有文本也停止录音
+                        this.stopRecording();
+                    }
+                } else {
+                    console.error('停止语音识别失败，状态码:', response.status);
+                    this.stopRecording();
+                }
+            } catch (error) {
+                console.error('停止语音识别请求失败:', error);
+                this.stopRecording();
+            }
+            
+            this.recognitionSessionId = null;
+            console.log('停止实时语音识别');
+        }
+    }
+    
+    // 音频流传输方法
+    startAudioStreaming() {
+        if (!this.stream || !this.recognitionSessionId) return;
+        
+        try {
+            // 创建音频上下文
+            this.audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                sampleRate: 16000
+            });
+            
+            // 创建音频处理节点
+            const source = this.audioContext.createMediaStreamSource(this.stream);
+            this.audioProcessor = this.audioContext.createScriptProcessor(4096, 1, 1);
+            
+            // 连接节点
+            source.connect(this.audioProcessor);
+            this.audioProcessor.connect(this.audioContext.destination);
+            
+            // 处理音频数据
+            this.audioProcessor.onaudioprocess = async (e) => {
+                if (!this.recognitionSessionId) return;
+                
+                const inputData = e.inputBuffer.getChannelData(0);
+                // 转换为16位PCM数据
+                const pcmData = this.floatTo16BitPCM(inputData);
+                
+                // 发送音频数据
+                try {
+                    await this.sendAudioData(pcmData);
+                } catch (error) {
+                    console.error('音频数据发送失败:', error);
+                    // 如果发送失败，停止录音
+                    this.stopRecording();
+                }
+            };
+        } catch (error) {
+            console.error('音频流处理初始化失败:', error);
+        }
+    }
+    
+    // 浮点数转16位PCM
+    floatTo16BitPCM(input) {
+        const output = new Int16Array(input.length);
+        for (let i = 0; i < input.length; i++) {
+            const s = Math.max(-1, Math.min(1, input[i]));
+            output[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+        }
+        return output;
+    }
+    
+    // 发送音频数据到后端
+    async sendAudioData(pcmData) {
+        if (!this.recognitionSessionId) return;
+        
+        try {
+            const response = await fetch('/api/audio/send-audio-data', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    session_id: this.recognitionSessionId,
+                    audio_data: Array.from(pcmData)
+                })
+            });
+            
+            if (response.ok) {
+                const result = await response.json();
+                // 不再处理中间识别结果，只返回成功状态
+                return result;
+            } else {
+                throw new Error('网络请求失败');
+            }
+        } catch (error) {
+            console.error('发送音频数据失败:', error);
+            throw error;
+        }
+    }
+    
+    // 语音识别完成回调
+    onSpeechRecognized(text) {
+        console.log('识别到语音文本:', text);
+        if (text.trim()) {
+            // 保存识别到的文本
+            this.recognizedText = text;
+            
+            // 发送识别到的文本给角色
+            this.sendTextToCharacter(text);
+        }
+    }
+    
+    // 发送文本给角色
+    async sendTextToCharacter(text) {
+        if (!this.app.currentCharacter) {
+            this.app.showModal('请先选择一个角色');
+            // 停止录音
+            this.stopRecording();
+            return;
         }
         
-        return '';
+        // 立即在聊天界面中显示用户识别到的文本
+        this.app.addMessageToUI('user', text);
+        
+        // 显示处理状态
+        const processingId = this.app.addThinkingMessage('正在处理语音...');
+        
+        try {
+            const response = await fetch('/api/chat/stream', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    character_id: this.app.currentCharacter.character_id,
+                    message: text,
+                    conversation_id: this.app.currentConversation?.conversation_id,
+                    input_mode: this.app.inputMode // 传递输入模式
+                })
+            });
+            
+            if (response.ok) {
+                this.app.removeThinkingMessage(processingId);
+                
+                // 创建空的AI消息容器
+                const aiMessageId = this.app.createStreamingMessage();
+                
+                // 读取流式响应
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let conversationId = '';
+                let aiContent = '';
+                let audioData = null; // 音频数据
+                
+                while (true) {
+                    const { done, value } = await reader.read();
+                    
+                    if (done) {
+                        break;
+                    }
+                    
+                    buffer += decoder.decode(value, { stream: true });
+                    
+                    // 处理缓冲区中的数据
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop(); // 保留未完整的行
+                    
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.substring(6));
+                                
+                                if (data.type === 'start') {
+                                    conversationId = data.conversation_id;
+                                } else if (data.type === 'audio') {
+                                    // 保存音频数据
+                                    audioData = data.audio_data;
+                                } else if (data.type === 'chunk') {
+                                    aiContent += data.content;
+                                    this.app.updateStreamingMessage(aiMessageId, aiContent);
+                                } else if (data.type === 'end') {
+                                    // 流式输出完成
+                                    console.log('流式输出完成');
+                                    
+                                    // 如果有音频数据且在语音模式下，播放音频
+                                    if (audioData && this.app.inputMode === 'voice') {
+                                        await this.playAudioFromBase64(audioData);
+                                    }
+                                } else if (data.type === 'error') {
+                                    throw new Error(data.error);
+                                }
+                            } catch (e) {
+                                console.error('解析SSE数据失败:', e);
+                            }
+                        }
+                    }
+                }
+                
+                // 更新本地对话状态
+                if (conversationId && aiContent) {
+                    this.app.currentConversation = this.app.currentConversation || {};
+                    this.app.currentConversation.conversation_id = conversationId;
+                    this.app.updateLocalConversationState(text, aiContent, conversationId);
+                    
+                    // 异步刷新对话列表
+                    this.app.loadConversations().catch(console.error);
+                }
+            } else {
+                this.app.removeThinkingMessage(processingId);
+                this.app.addMessageToUI('assistant', '抱歉，我现在无法回复您的消息。');
+            }
+        } catch (error) {
+            console.error('发送消息失败:', error);
+            this.app.removeThinkingMessage(processingId);
+            this.app.addMessageToUI('assistant', '网络连接失败，请稍后重试。');
+        } finally {
+            // 确保录音被停止
+            this.stopRecording();
+        }
+    }
+    
+    // 播放Base64编码的音频数据
+    async playAudioFromBase64(base64Audio) {
+        try {
+            // 将Base64数据转换为Blob
+            const binary = atob(base64Audio);
+            const array = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) {
+                array[i] = binary.charCodeAt(i);
+            }
+            
+            // 创建Blob对象
+            const blob = new Blob([array], { type: 'audio/pcm' });
+            const url = URL.createObjectURL(blob);
+            
+            // 播放音频
+            this.audioPlayer.src = url;
+            await this.audioPlayer.play();
+            
+            // 清理URL对象
+            URL.revokeObjectURL(url);
+        } catch (error) {
+            console.error('播放音频失败:', error);
+        }
     }
     
     initAudioVisualization() {
@@ -253,117 +530,6 @@ class AudioManager {
         
         if (voiceWave) {
             voiceWave.style.display = isRecording ? 'flex' : 'none';
-        }
-    }
-    
-    async processRecording() {
-        if (this.audioChunks.length === 0) {
-            console.warn('没有录音数据');
-            return;
-        }
-        
-        try {
-            // 创建音频Blob
-            const audioBlob = new Blob(this.audioChunks, { 
-                type: this.getSupportedMimeType() || 'audio/wav' 
-            });
-            
-            // 转换为base64
-            const audioBase64 = await this.blobToBase64(audioBlob);
-            
-            // 发送语音聊天请求
-            await this.sendVoiceMessage(audioBase64);
-            
-        } catch (error) {
-            console.error('处理录音失败:', error);
-            this.app.showModal('语音处理失败，请重试');
-        }
-    }
-    
-    async blobToBase64(blob) {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => {
-                const dataUrl = reader.result;
-                const base64 = dataUrl.split(',')[1];
-                resolve(base64);
-            };
-            reader.onerror = reject;
-            reader.readAsDataURL(blob);
-        });
-    }
-    
-    async sendVoiceMessage(audioBase64) {
-        if (!this.app.currentCharacter) {
-            this.app.showModal('请先选择一个角色');
-            return;
-        }
-        
-        // 显示语音处理状态
-        const processingId = this.app.addThinkingMessage('正在处理语音...');
-        
-        try {
-            const response = await fetch('/api/audio/voice-chat', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    audio_data: audioBase64,
-                    character_id: this.app.currentCharacter.character_id,
-                    conversation_id: this.app.currentConversation?.conversation_id,
-                    voice: 'zhifeng' // 可以让用户选择
-                })
-            });
-            
-            if (response.ok) {
-                const result = await response.json();
-                
-                // 移除处理状态
-                this.app.removeThinkingMessage(processingId);
-                
-                if (result.success) {
-                    // 更新当前对话ID
-                    if (!this.app.currentConversation) {
-                        this.app.currentConversation = { 
-                            conversation_id: result.conversation_id 
-                        };
-                    }
-                    
-                    // 添加用户语音消息（显示识别的文字）
-                    this.app.addMessageToUI('user', result.user_text);
-                    
-                    // 添加AI回复消息
-                    this.app.addMessageToUI('assistant', result.ai_text);
-                    
-                    // 播放AI语音回复
-                    if (result.ai_audio_url) {
-                        await this.playAudio(result.ai_audio_url);
-                    }
-                    
-                    // 重新加载对话列表
-                    await this.app.loadConversations();
-                    
-                } else {
-                    // 优化错误提示，提供更好的用户体验
-                    const errorMsg = result.error || '语音处理失败';
-                    
-                    // 如果是语音识别问题，提供降级方案
-                    if (errorMsg.includes('语音识别功能暂时不可用')) {
-                        this.showVoiceUnavailableMessage();
-                    } else {
-                        this.app.addMessageToUI('assistant', '抱歉，语音处理失败: ' + errorMsg);
-                    }
-                }
-            } else {
-                this.app.removeThinkingMessage(processingId);
-                this.app.addMessageToUI('assistant', '语音消息发送失败');
-            }
-            
-        } catch (error) {
-            console.error('发送语音消息失败:', error);
-            this.app.removeThinkingMessage(processingId);
-            this.app.addMessageToUI('assistant', '网络连接失败，请稍后重试');
         }
     }
     

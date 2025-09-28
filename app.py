@@ -286,6 +286,7 @@ def chat_stream():
         character_id = data.get('character_id')
         message = data.get('message')
         conversation_id = data.get('conversation_id')
+        input_mode = data.get('input_mode', 'text')  # 获取输入模式（text或voice）
         
         if not character_id or not message:
             return jsonify({'success': False, 'error': '参数不完整'}), 400
@@ -308,11 +309,25 @@ def chat_stream():
                 response_data = response.model_dump()
                 response_data['timestamp'] = response_data['timestamp'].isoformat()
                 
-                # 模拟流式输出效果
-                content = response_data['response']
-                
                 # 先发送对话初始信息
                 yield f"data: {json.dumps({'type': 'start', 'conversation_id': response_data['conversation_id']}, ensure_ascii=False)}\n\n"
+                
+                # 获取AI回复内容
+                content = response_data['response']
+                
+                # 如果是语音模式，同时进行实时语音合成
+                if input_mode == 'voice':
+                    # 启动实时语音合成
+                    tts_result = run_async(audio_service.start_realtime_speech_synthesis(
+                        text=content,
+                        voice='zhifeng',
+                        format='pcm',
+                        sample_rate=24000
+                    ))
+                    
+                    if tts_result['success']:
+                        # 发送音频数据
+                        yield f"data: {json.dumps({'type': 'audio', 'audio_data': tts_result['audio_data']}, ensure_ascii=False)}\n\n"
                 
                 # 逐字发送内容
                 for i, char in enumerate(content):
@@ -394,26 +409,85 @@ def batch_delete_conversations():
 
 # ========== 音频相关API ==========
 
-@app.route('/api/audio/speech-to-text', methods=['POST'])
-def speech_to_text():
-    """语音转文字"""
+@app.route('/api/audio/start-speech-recognition', methods=['POST'])
+def start_speech_recognition():
+    """开始实时语音识别"""
     try:
         user_id = session.get('user_id')
         if not user_id:
             return jsonify({'success': False, 'error': '未登录'}), 401
         
         data = request.get_json()
-        audio_data = data.get('audio_data')  # base64编码的音频
+        character_id = data.get('character_id')
+        conversation_id = data.get('conversation_id')
+        
+        if not character_id:
+            return jsonify({'success': False, 'error': '角色ID不能为空'}), 400
+        
+        # 调用音频服务开始实时语音识别
+        result = run_async(audio_service.start_real_time_speech_recognition(
+            user_id=user_id,
+            character_id=character_id,
+            conversation_id=conversation_id
+        ))
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"启动语音识别异常: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/audio/stop-speech-recognition', methods=['POST'])
+def stop_speech_recognition():
+    """停止实时语音识别"""
+    try:
+        data = request.get_json()
+        session_id = data.get('session_id')
+        
+        if not session_id:
+            return jsonify({'success': False, 'error': '会话ID不能为空'}), 400
+        
+        # 调用音频服务停止实时语音识别
+        result = run_async(audio_service.stop_real_time_speech_recognition(
+            session_id=session_id
+        ))
+        
+        return jsonify(result)
+        
+    except Exception as e:
+        logger.error(f"停止语音识别异常: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/audio/send-audio-data', methods=['POST'])
+def send_audio_data():
+    """发送音频数据进行实时识别"""
+    try:
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({'success': False, 'error': '未登录'}), 401
+        
+        data = request.get_json()
+        audio_data = data.get('audio_data')
+        session_id = data.get('session_id')
         
         if not audio_data:
             return jsonify({'success': False, 'error': '音频数据不能为空'}), 400
         
-        result = run_async(audio_service.speech_to_text())
+        if not session_id:
+            return jsonify({'success': False, 'error': '会话ID不能为空'}), 400
+        
+        # 调用音频服务处理音频流
+        result = run_async(audio_service.process_audio_stream(
+            session_id=session_id,
+            audio_data=audio_data
+        ))
+        
         return jsonify(result)
         
     except Exception as e:
-        logger.error(f"语音转文字异常: {e}")
+        logger.error(f"发送音频数据异常: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
 
 @app.route('/api/audio/text-to-speech', methods=['POST'])
 def text_to_speech():
@@ -437,35 +511,33 @@ def text_to_speech():
         logger.error(f"文字转语音异常: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
-@app.route('/api/audio/voice-chat', methods=['POST'])
-def voice_chat():
-    """语音聊天"""
+@app.route('/api/audio/start-realtime-tts', methods=['POST'])
+def start_realtime_tts():
+    """开始实时语音合成"""
     try:
         user_id = session.get('user_id')
         if not user_id:
             return jsonify({'success': False, 'error': '未登录'}), 401
         
         data = request.get_json()
-        audio_data = data.get('audio_data')
-        character_id = data.get('character_id')
-        conversation_id = data.get('conversation_id')
+        text = data.get('text')
         voice = data.get('voice', 'zhifeng')
+        format = data.get('format', 'pcm')
+        sample_rate = data.get('sample_rate', 24000)
         
-        if not audio_data or not character_id:
-            return jsonify({'success': False, 'error': '参数不完整'}), 400
+        if not text:
+            return jsonify({'success': False, 'error': '文本不能为空'}), 400
         
-        result = run_async(audio_service.process_voice_chat(
-            audio_data=audio_data,
-            user_id=user_id,
-            character_id=character_id,
-            conversation_id=conversation_id,
-            voice=voice
+        result = run_async(audio_service.start_realtime_speech_synthesis(
+            text=text,
+            voice=voice,
+            format=format,
+            sample_rate=sample_rate
         ))
-        
         return jsonify(result)
         
     except Exception as e:
-        logger.error(f"语音聊天异常: {e}")
+        logger.error(f"启动实时语音合成异常: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/audio/voices', methods=['GET'])

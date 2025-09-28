@@ -1,12 +1,15 @@
 import os
 import uuid
-import base64
 import logging
+import asyncio
+import json
+import numpy as np
 from datetime import datetime
 from typing import Optional, Dict, Any, Union, List
 from backend.services.dashscope_service import dashscope_service
 from backend.utils.redis_client import redis_client
 from config.settings import settings
+from dashscope.audio.asr import RecognitionCallback, RecognitionResult
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +21,10 @@ class AudioService:
         self.redis = redis_client
         self.audio_dir = os.path.join(settings.UPLOAD_FOLDER, 'audio')
         self._ensure_audio_dir()
+        # 存储活跃的语音识别会话
+        self.active_sessions = {}
+        # 存储语音识别回调处理器
+        self.recognition_callbacks = {}
     
     def _ensure_audio_dir(self):
         """确保音频目录存在"""
@@ -25,37 +32,6 @@ class AudioService:
             os.makedirs(self.audio_dir, exist_ok=True)
         except Exception as e:
             logger.error(f"创建音频目录失败: {e}")
-    
-    async def speech_to_text(
-        self,  
-        format: str = 'pcm'
-    ) -> Dict[str, Any]:
-        """
-        实时语音转文字
-        
-        Args:
-            format: 音频格式
-            
-        Returns:
-            识别结果
-        """
-        try:
-            # 调用实时语音识别服务
-            result = await self.dashscope.speech_recognition()
-            
-            if result['success']:
-                logger.info(f"语音识别成功: {result['text']}")
-            else:
-                logger.error(f"语音识别失败: {result['error']}")
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"语音转文字异常: {e}")
-            return {
-                'success': False,
-                'error': str(e)
-            }
     
     async def text_to_speech(
         self, 
@@ -115,6 +91,43 @@ class AudioService:
                 'error': str(e)
             }
     
+    async def start_realtime_speech_synthesis(
+        self, 
+        text: str, 
+        voice: str = 'zhifeng',
+        format: str = 'pcm',
+        sample_rate: int = 24000
+    ) -> Dict[str, Any]:
+        """
+        开始实时语音合成
+        
+        Args:
+            text: 要合成的文本
+            voice: 音色
+            format: 音频格式
+            sample_rate: 采样率
+            
+        Returns:
+            合成结果
+        """
+        try:
+            # 调用实时语音合成服务
+            result = await self.dashscope.start_realtime_speech_synthesis(
+                text=text,
+                voice=voice,
+                format=format,
+                sample_rate=sample_rate
+            )
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"启动实时语音合成异常: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
     async def _save_audio_file(self, audio_data: bytes, format: str) -> Optional[str]:
         """
         保存音频文件
@@ -158,126 +171,7 @@ class AudioService:
         except Exception as e:
             logger.error(f"保存音频文件异常: {e}")
             return None
-    
-    async def get_audio_file_info(self, file_id: str) -> Optional[Dict[str, Any]]:
-        """获取音频文件信息"""
-        try:
-            file_key = f"audio_file:{file_id}"
-            return self.redis.get_data(file_key)
-        except Exception as e:
-            logger.error(f"获取音频文件信息异常: {e}")
-            return None
-    
-    async def delete_audio_file(self, file_id: str) -> bool:
-        """删除音频文件"""
-        try:
-            # 获取文件信息
-            file_info = await self.get_audio_file_info(file_id)
-            if not file_info:
-                return False
-            
-            # 删除物理文件
-            file_path = file_info.get('file_path')
-            if file_path and os.path.exists(file_path):
-                os.remove(file_path)
-            
-            # 删除缓存信息
-            file_key = f"audio_file:{file_id}"
-            self.redis.delete_data(file_key)
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"删除音频文件异常: {e}")
-            return False
-    
-    async def process_voice_chat(
-        self, 
-        audio_data: Union[bytes, str],
-        user_id: str,
-        character_id: str,
-        conversation_id: Optional[str] = None,
-        voice: str = 'zhifeng'
-    ) -> Dict[str, Any]:
-        """
-        处理语音聊天
-        
-        Args:
-            audio_data: 用户语音数据
-            user_id: 用户ID
-            character_id: 角色ID
-            conversation_id: 对话ID（可选）
-            voice: AI回复音色
-            
-        Returns:
-            处理结果
-        """
-        try:
-            # 1. 语音转文字
-            stt_result = await self.speech_to_text()
-            if not stt_result['success']:
-                return {
-                    'success': False,
-                    'error': f"语音识别失败: {stt_result['error']}"
-                }
-            
-            user_text = stt_result['text']
-            if not user_text.strip():
-                return {
-                    'success': False,
-                    'error': '未识别到有效语音内容'
-                }
-            
-            # 2. 获取AI文字回复（这里需要调用对话服务）
-            from backend.services.conversation_service import conversation_service
-            from backend.models.data_models import ChatRequest, MessageType
-            
-            chat_request = ChatRequest(
-                user_id=user_id,
-                character_id=character_id,
-                conversation_id=conversation_id,
-                message=user_text,
-                message_type=MessageType.AUDIO
-            )
-            
-            chat_response = await conversation_service.chat(chat_request)
-            ai_text = chat_response.response
-            
-            # 3. AI文字转语音
-            tts_result = await self.text_to_speech(
-                text=ai_text,
-                voice=voice,
-                save_file=True
-            )
-            
-            if not tts_result['success']:
-                # 如果语音合成失败，至少返回文字回复
-                return {
-                    'success': True,
-                    'user_text': user_text,
-                    'ai_text': ai_text,
-                    'ai_audio_url': None,
-                    'conversation_id': chat_response.conversation_id,
-                    'message_id': chat_response.message_id,
-                    'warning': f"语音合成失败: {tts_result['error']}"
-                }
-            
-            return {
-                'success': True,
-                'user_text': user_text,
-                'ai_text': ai_text,
-                'ai_audio_url': tts_result['audio_url'],
-                'conversation_id': chat_response.conversation_id,
-                'message_id': chat_response.message_id,
-                'character_avatar_url': chat_response.character_avatar_url
-            }
-            
-        except Exception as e:
-            logger.error(f"处理语音聊天异常: {e}")
-            return {
-                'success': False,
-                'error': str(e)
-            }
+
     
     async def get_available_voices(self) -> List[str]:
         """获取可用音色列表"""
@@ -286,42 +180,224 @@ class AudioService:
         except Exception as e:
             logger.error(f"获取音色列表异常: {e}")
             return ['zhifeng']  # 返回默认音色
-    
-    async def cleanup_old_files(self, days: int = 7) -> int:
+
+
+    async def start_real_time_speech_recognition(
+        self, 
+        user_id: str,
+        character_id: str,
+        conversation_id: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
-        清理旧音频文件
+        开始实时语音识别
         
         Args:
-            days: 清理多少天前的文件
+            user_id: 用户ID
+            character_id: 角色ID
+            conversation_id: 对话ID（可选）
             
         Returns:
-            清理的文件数量
+            识别会话信息
         """
         try:
-            cleanup_count = 0
-            cutoff_time = datetime.now().timestamp() - (days * 24 * 3600)
+            # 生成会话ID
+            session_id = str(uuid.uuid4())
             
-            # 遍历音频目录
-            for filename in os.listdir(self.audio_dir):
-                file_path = os.path.join(self.audio_dir, filename)
+            # 创建识别回调处理器
+            class RecognitionCallbackHandler(RecognitionCallback):
+                def __init__(self, session_id, audio_service):
+                    super().__init__()
+                    self.session_id = session_id
+                    self.audio_service = audio_service
+                    self.final_text = ""
                 
-                # 检查文件修改时间
-                if os.path.isfile(file_path):
-                    file_mtime = os.path.getmtime(file_path)
-                    if file_mtime < cutoff_time:
-                        try:
-                            os.remove(file_path)
-                            cleanup_count += 1
-                            logger.debug(f"清理旧音频文件: {filename}")
-                        except Exception as e:
-                            logger.error(f"删除文件失败 {filename}: {e}")
+                def on_open(self) -> None:
+                    logger.info(f"语音识别连接已打开: {self.session_id}")
+                
+                def on_close(self) -> None:
+                    logger.info(f"语音识别连接已关闭: {self.session_id}")
+                    # 不再在连接关闭时立即移除会话，而是在stop_real_time_speech_recognition中处理
+                    # 这样可以确保stop_real_time_speech_recognition方法能获取到最终的识别文本
+                
+                def on_event(self, result: RecognitionResult) -> None:
+                    try:
+                        sentence = result.get_sentence()
+                        if isinstance(sentence, dict):
+                            # 检查是否是最终识别结果
+                            if sentence.get('end_time') is not None:
+                                text = sentence.get('text', '')
+                                if text.strip():
+                                    # 累积最终文本，而不是覆盖
+                                    if self.final_text:
+                                        self.final_text += " " + text
+                                    else:
+                                        self.final_text = text
+                                    logger.info(f"识别到最终文本片段: {text}")
+                                    # 将累积的识别结果存储到会话中
+                                    if self.session_id in self.audio_service.active_sessions:
+                                        self.audio_service.active_sessions[self.session_id]['recognized_text'] = self.final_text
+                            else:
+                                # 中间结果仅用于调试，不存储
+                                text = sentence.get('text', '')
+                                logger.debug(f"中间识别结果: {text}")
+                    except Exception as e:
+                        logger.error(f"处理识别结果异常: {e}")
             
-            logger.info(f"音频文件清理完成，共清理 {cleanup_count} 个文件")
-            return cleanup_count
+            # 创建回调实例
+            callback_handler = RecognitionCallbackHandler(session_id, self)
+            
+            # 启动语音识别
+            from dashscope.audio.asr import Recognition
+            recognition = Recognition(
+                model='paraformer-realtime-v2',
+                format='pcm',
+                sample_rate=16000,
+                callback=callback_handler
+            )
+            
+            # 启动识别
+            recognition.start()
+            
+            # 创建会话数据
+            session_data = {
+                'user_id': user_id,
+                'character_id': character_id,
+                'conversation_id': conversation_id,
+                'created_at': datetime.now(),
+                'active': True,
+                'recognized_text': '',  # 初始化为空字符串
+                'recognition_instance': recognition,
+                'callback_handler': callback_handler
+            }
+            
+            # 存储会话和回调处理器
+            self.active_sessions[session_id] = session_data
+            self.recognition_callbacks[session_id] = callback_handler
+            
+            logger.info(f"开始实时语音识别会话: {session_id}")
+            
+            return {
+                'success': True,
+                'session_id': session_id
+            }
             
         except Exception as e:
-            logger.error(f"清理音频文件异常: {e}")
-            return 0
+            logger.error(f"启动实时语音识别异常: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    async def stop_real_time_speech_recognition(
+        self, 
+        session_id: str
+    ) -> Dict[str, Any]:
+        """
+        停止实时语音识别
+        
+        Args:
+            session_id: 会话ID
+            
+        Returns:
+            操作结果
+        """
+        try:
+            final_text = ""
+            if session_id in self.active_sessions:
+                session_data = self.active_sessions[session_id]
+                recognition = session_data.get('recognition_instance')
+                
+                # 获取最终识别文本
+                final_text = session_data.get('recognized_text', '')
+                
+                # 停止识别
+                if recognition:
+                    try:
+                        recognition.stop()
+                    except Exception as e:
+                        logger.error(f"停止语音识别异常: {e}")
+                
+                # 从活跃会话中移除
+                del self.active_sessions[session_id]
+                
+                logger.info(f"停止实时语音识别会话: {session_id}")
+            
+            # 也从回调处理器中移除
+            if session_id in self.recognition_callbacks:
+                del self.recognition_callbacks[session_id]
+            
+            return {
+                'success': True,
+                'text': final_text
+            }
+            
+        except KeyError as e:
+            logger.warning(f"会话ID不存在: {e}")
+            return {
+                'success': True,  # 即使会话不存在，也返回成功
+            }
+        except Exception as e:
+            logger.error(f"停止实时语音识别异常: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+
+    async def process_audio_stream(
+        self, 
+        session_id: str,
+        audio_data: List[int]
+    ) -> Dict[str, Any]:
+        """
+        处理音频流数据
+        
+        Args:
+            session_id: 会话ID
+            audio_data: 音频数据（PCM格式）
+            
+        Returns:
+            处理结果
+        """
+        try:
+            # 检查会话是否存在且活跃
+            if session_id not in self.active_sessions:
+                return {
+                    'success': False,
+                    'error': '会话不存在'
+                }
+            
+            session_data = self.active_sessions[session_id]
+            if not session_data.get('active', False):
+                return {
+                    'success': False,
+                    'error': '会话已停止'
+                }
+            
+            # 获取识别实例
+            recognition = session_data.get('recognition_instance')
+            if not recognition:
+                return {
+                    'success': False,
+                    'error': '识别实例不存在'
+                }
+            
+            # 将音频数据转换为bytes
+            audio_bytes = np.array(audio_data, dtype=np.int16).tobytes()
+            
+            # 发送音频数据到识别服务
+            recognition.send_audio_frame(audio_bytes)
+            
+            # 不再立即返回识别到的文本，而是只在会话结束时返回
+            return {
+                'success': True
+            }
+            
+        except Exception as e:
+            logger.error(f"处理音频流异常: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
 
 # 创建全局音频服务实例
 audio_service = AudioService()
